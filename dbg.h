@@ -29,16 +29,19 @@ License (MIT):
 #ifndef DBG_MACRO_DBG_H
 #define DBG_MACRO_DBG_H
 
+// 定义平台特定宏
 #if defined(__unix__) || (defined(__APPLE__) && defined(__MACH__))
 #define DBG_MACRO_UNIX
 #elif defined(_MSC_VER)
 #define DBG_MACRO_WINDOWS
 #endif
 
+// 抛出编译器警告信息，提示用户该文件已包含在项目中
 #ifndef DBG_MACRO_NO_WARNING
 #pragma message("WARNING: the 'dbg.h' header is included in your code base")
 #endif  // DBG_MACRO_NO_WARNING
 
+// 实现基本调试功能所必要的头文件
 #include <algorithm>
 #include <chrono>
 #include <ctime>
@@ -58,6 +61,12 @@ License (MIT):
 #include <unistd.h>
 #endif
 
+#ifdef DBG_MACRO_WINDOWS
+#include <io.h>
+#endif  // DBG_MACRO_WINDOWS
+
+
+// 检查项目支持的C++标准
 #if __cplusplus >= 201703L
 #define DBG_MACRO_CXX_STANDARD 17
 #elif __cplusplus >= 201402L
@@ -78,8 +87,8 @@ inline bool isColorizedOutputEnabled() {
   return true;
 #elif defined(DBG_MACRO_UNIX)
   return isatty(fileno(stderr));
-#else
-  return true;
+#elif defined(DBG_MACRO_WINDOWS)
+  return _isatty(fileno(stderr));
 #endif
 }
 
@@ -113,6 +122,7 @@ static constexpr size_t SUFFIX_LENGTH = sizeof(">(void)") - 1;
 
 // Formatting helpers
 
+// 整数格式化输出类模板
 template <typename T>
 struct print_formatted {
   static_assert(std::is_integral<T>::value,
@@ -140,6 +150,7 @@ struct print_formatted {
   int base;
 };
 
+// 定义常见进制的格式化输出
 template <typename T>
 print_formatted<T> hex(T value) {
   return print_formatted<T>{value, 16};
@@ -165,6 +176,7 @@ const char* type_name_impl() {
 template <typename T>
 struct type_tag {};
 
+// 从编译器返回的函数签名字符串中提取非数组类型的名称
 template <int&... ExplicitArgumentBarrier, typename T>
 typename std::enable_if<(std::rank<T>::value == 0), std::string>::type
 get_type_name(type_tag<T>) {
@@ -175,6 +187,7 @@ get_type_name(type_tag<T>) {
                      type.size() - pf::PREFIX_LENGTH - pf::SUFFIX_LENGTH);
 }
 
+// 递归调用提取所有类型的类型名称
 template <typename T>
 std::string type_name() {
   if (std::is_volatile<T>::value) {
@@ -203,12 +216,17 @@ std::string type_name() {
   return get_type_name(type_tag<T>{});
 }
 
+// 当编译时发现t_std与t_bit实际等价时，优先返回位宽名称
+// 否则返回原始标准类型名称
+// `#t_bit`为宏的字符串化操作，将类型标识符变为字符串字面量
 // Prefer bitsize variant over standard integral types
 #define DBG_MACRO_REGISTER_TYPE_ASSOC(t_std, t_bit)             \
   inline constexpr const char* get_type_name(type_tag<t_std>) { \
     return std::is_same<t_std, t_bit>::value ? #t_bit : #t_std; \
   }
 
+// 针对若干标准类型生成具体的 `get_type_name(type_tag<...>)`模板示例
+// 这些实例在模板重载解析时会优先被选择，从而保证对常见整型返回更好的名字。
 DBG_MACRO_REGISTER_TYPE_ASSOC(unsigned char, uint8_t)
 DBG_MACRO_REGISTER_TYPE_ASSOC(unsigned short, uint16_t)
 DBG_MACRO_REGISTER_TYPE_ASSOC(unsigned int, uint32_t)
@@ -218,16 +236,21 @@ DBG_MACRO_REGISTER_TYPE_ASSOC(short, int16_t)
 DBG_MACRO_REGISTER_TYPE_ASSOC(int, int32_t)
 DBG_MACRO_REGISTER_TYPE_ASSOC(long, int64_t)
 
+// 为`std::string`生成可读的字符串
 inline std::string get_type_name(type_tag<std::string>) {
   return "std::string";
 }
 
+// 为C风格数组生成可读的类型字符串
+// 提取一维数组的元素个数
 template <typename T>
 typename std::enable_if<(std::rank<T>::value == 1), std::string>::type
 get_array_dim() {
   return "[" + std::to_string(std::extent<T>::value) + "]";
 }
 
+// 递归模板
+// 依次提取从外到内各个维度的元素个数
 template <typename T>
 typename std::enable_if<(std::rank<T>::value > 1), std::string>::type
 get_array_dim() {
@@ -241,6 +264,7 @@ get_type_name(type_tag<T>) {
   return type_name<typename std::remove_all_extents<T>::type>() + get_array_dim<T>();
 }
 
+// 为部分标准容器生成可读字符串
 template <typename T, size_t N>
 std::string get_type_name(type_tag<std::array<T, N>>) {
   return "std::array<" + type_name<T>() + ", " + std::to_string(N) + ">";
@@ -259,8 +283,10 @@ std::string get_type_name(type_tag<std::pair<T1, T2>>) {
 template <typename... T>
 std::string type_list_to_string() {
   std::string result;
+  // 利用初始化列表配合参数包展开技巧
+  // 提取参数包中的每个类型
   auto unused = {(result += type_name<T>() + ", ", 0)..., 0};
-  static_cast<void>(unused);
+  static_cast<void>(unused);    // 消除编译器警告
 
 #if DBG_MACRO_CXX_STANDARD >= 17
   if constexpr (sizeof...(T) > 0) {
